@@ -1,54 +1,93 @@
-import os
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
 
-# Define dataset path
-DATASET_PATH = "./dataset/"  # Update this to the actual dataset location
+def create_bounding_boxes(image_path, model_config, model_weights, class_names, confidence_threshold=0.5, nms_threshold=0.4):
+    """
+    Use YOLO to create bounding boxes on an image.
 
-if not os.path.exists(DATASET_PATH):
-    print(f"Error: Dataset path '{DATASET_PATH}' does not exist!")
-else:
-    print(f"Dataset found at: {DATASET_PATH}")
+    :param image_path: Path to the input image.
+    :param model_config: Path to YOLO configuration file.
+    :param model_weights: Path to YOLO pre-trained weights.
+    :param class_names: List of class names corresponding to YOLO model.
+    :param confidence_threshold: Minimum confidence for detections.
+    :param nms_threshold: Non-maximum suppression threshold.
+    :return: Image with bounding boxes drawn.
+    """
+    # Load YOLO model
+    net = cv2.dnn.readNetFromDarknet(model_config, model_weights)
+    layer_names = net.getLayerNames()
+    output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
 
-# Function to load images without resizing & keep original RGB format
-def load_images(dataset_path):
-    images = []
-    labels = []
+    # Load image
+    image = cv2.imread(image_path)
+    height, width, _ = image.shape
+
+    # Prepare the image for YOLO
+    blob = cv2.dnn.blobFromImage(image, 1/255.0, (416, 416), swapRB=True, crop=False)
+    net.setInput(blob)
+
+    # Perform forward pass
+    outputs = net.forward(output_layers)
+
+    # Process detections
+    boxes = []
+    confidences = []
+    class_ids = []
+
+    for output in outputs:
+        for detection in output:
+            scores = detection[5:]
+            class_id = np.argmax(scores)
+            confidence = scores[class_id]
+            if confidence > confidence_threshold:
+                center_x = int(detection[0] * width)
+                center_y = int(detection[1] * height)
+                w = int(detection[2] * width)
+                h = int(detection[3] * height)
+                x = int(center_x - w / 2)
+                y = int(center_y - h / 2)
+                boxes.append([x, y, w, h])
+                confidences.append(float(confidence))
+                class_ids.append(class_id)
+
+    # Apply non-maximum suppression
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, nms_threshold)
+
+    # Draw bounding boxes
+    for i in indices.flatten():
+        x, y, w, h = boxes[i]
+        label = str(class_names[class_ids[i]])
+        confidence = confidences[i]
+        color = (0, 255, 0)  # Green color for bounding box
+        cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(image, f"{label} {confidence:.2f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+    return image
+
+if __name__ == "__main__":
+    # Paths to YOLO configuration, weights, and class names
+    model_config = "yolov3.cfg"
+    model_weights = "yolov3.weights"
+    # Define class names directly in the script
+    class_names = [
+        "person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", "boat", "traffic light",
+        "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+        "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+        "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
+        "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+        "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "sofa",
+        "pottedplant", "bed", "diningtable", "toilet", "tvmonitor", "laptop", "mouse", "remote", "keyboard",
+        "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
+        "scissors", "teddy bear", "hair drier", "toothbrush"
+    ]
     
-    for croc_id in os.listdir(dataset_path):
-        croc_folder = os.path.join(dataset_path, croc_id)
-        print("Loading images from:", croc_folder)
-        if os.path.isdir(croc_folder):
-            for img_file in os.listdir(croc_folder):
-                img_path = os.path.join(croc_folder, img_file)
-                img = cv2.imread(img_path)  # Load in original color (BGR format)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Convert to RGB
-                
-                if img is not None:
-                    img = img / 255.0  # Normalize pixel values (0 to 1)
-                    images.append(img)
-                    labels.append(croc_id)
-    
-    return np.array(images), np.array(labels)
+    # Path to the input image
+    image_path = "dataset/Training/Croc1/1.jpg"
 
-# Load dataset (with original size and color)
-images, labels = load_images(DATASET_PATH)
-print(f"Images: {images.shape}, Labels: {labels.shape}")
-# Split dataset into training (80%) and testing (20%) sets
-X_train, X_test, y_train, y_test = train_test_split(images, labels, test_size=0.2, random_state=42)
+    # Generate bounding boxes
+    output_image = create_bounding_boxes(image_path, model_config, model_weights, class_names)
 
-# Display sample images
-plt.figure(figsize=(10, 5))
-for i in range(5):
-    plt.subplot(1, 5, i+1)
-    plt.imshow(X_train[i])
-    plt.title(f"ID: {y_train[i]}")
-    plt.axis("off")
-plt.show()
-
-# Print dataset information
-print("Dataset Loaded Successfully!")
-print(f"Total Images: {len(images)}, Train Set: {len(X_train)}, Test Set: {len(X_test)}")
-print(f"Image Dimensions After Processing: {X_train[0].shape}")  # Should be (3840, 2160, 3)
+    # Display the output image
+    cv2.imshow("Image with Bounding Boxes", output_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
