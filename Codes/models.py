@@ -1,5 +1,6 @@
 import numpy as np
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from xgboost import XGBClassifier
@@ -8,21 +9,44 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, roc_curve, auc
-from sklearn.preprocessing import label_binarize
+from sklearn.preprocessing import label_binarize, StandardScaler
+from sklearn.decomposition import PCA
 from itertools import cycle
 import os
+from joblib import parallel_backend
 
 class CrocodileClassifier:
     def __init__(self):
         """
         Initialize classification models
         """
-        # Initialize models with default parameters
+        # Initialize models with optimized parameters
+        linear_svc = LinearSVC(
+            dual="auto",  # Let sklearn choose the best algorithm
+            max_iter=2000,  # Increase max iterations
+            random_state=42
+        )
+        
+        # Wrap LinearSVC with CalibratedClassifierCV to get probability estimates
         self.models = {
-            'svm': SVC(probability=True, random_state=42),
-            'random_forest': RandomForestClassifier(random_state=42),
-            'knn': KNeighborsClassifier(n_neighbors=5),
-            'xgboost': XGBClassifier(random_state=42)
+            'svm': CalibratedClassifierCV(
+                linear_svc,
+                cv=3,  # Reduced CV folds for faster training
+                n_jobs=-1  # Use all CPU cores
+            ),
+            'random_forest': RandomForestClassifier(
+                n_estimators=100,
+                random_state=42,
+                n_jobs=-1
+            ),
+            'knn': KNeighborsClassifier(
+                n_neighbors=5,
+                n_jobs=-1
+            ),
+            'xgboost': XGBClassifier(
+                random_state=42,
+                n_jobs=-1
+            )
         }
         
         # Store best model
@@ -30,11 +54,39 @@ class CrocodileClassifier:
         self.best_model_name = None
         self.best_score = 0
         
+        # Initialize PCA and Scaler
+        self.pca = PCA(n_components=0.95)  # Keep 95% of variance
+        self.scaler = StandardScaler()
+        
         # Create plots directory if it doesn't exist
         self.plots_dir = 'plots'
         os.makedirs(self.plots_dir, exist_ok=True)
     
-    def train_and_evaluate(self, X, y, cv=10):
+    def preprocess_features(self, X, fit=False):
+        """
+        Preprocess features using scaling and PCA
+        
+        Args:
+            X (numpy.ndarray): Feature matrix
+            fit (bool): Whether to fit the transformers
+            
+        Returns:
+            numpy.ndarray: Preprocessed features
+        """
+        if fit:
+            # Scale the features
+            X_scaled = self.scaler.fit_transform(X)
+            # Apply PCA
+            X_reduced = self.pca.fit_transform(X_scaled)
+            print(f"\nReduced feature dimensions from {X.shape[1]} to {X_reduced.shape[1]}")
+            print(f"Explained variance ratio: {sum(self.pca.explained_variance_ratio_):.4f}")
+            return X_reduced
+        else:
+            # Transform using pre-fitted scaler and PCA
+            X_scaled = self.scaler.transform(X)
+            return self.pca.transform(X_scaled)
+    
+    def train_and_evaluate(self, X, y, cv=5):
         """
         Train and evaluate all models using cross-validation
         
@@ -46,37 +98,45 @@ class CrocodileClassifier:
         Returns:
             dict: Evaluation metrics for each model
         """
+        # Print original feature dimensions
+        print(f"\nOriginal feature dimensions: {X.shape[1]}")
+        
+        # Preprocess features
+        X_processed = self.preprocess_features(X, fit=True)
+        
         results = {}
         
-        for name, model in self.models.items():
-            print(f"\nTraining {name}...")
-            
-            # Perform cross-validation
-            cv_scores = cross_val_score(model, X, y, cv=cv)
-            
-            # Train model on full dataset
-            model.fit(X, y)
-            
-            # Get predictions
-            y_pred = model.predict(X)
-            
-            # Calculate metrics
-            metrics = {
-                'accuracy': accuracy_score(y, y_pred),
-                'precision': precision_score(y, y_pred, average='weighted'),
-                'recall': recall_score(y, y_pred, average='weighted'),
-                'f1': f1_score(y, y_pred, average='weighted'),
-                'cv_mean': cv_scores.mean(),
-                'cv_std': cv_scores.std()
-            }
-            
-            results[name] = metrics
-            
-            # Update best model
-            if metrics['cv_mean'] > self.best_score:
-                self.best_score = metrics['cv_mean']
-                self.best_model = model
-                self.best_model_name = name
+        # Use parallel backend for faster computation
+        with parallel_backend('threading', n_jobs=-1):
+            for name, model in self.models.items():
+                print(f"\nTraining {name}...")
+                
+                # Perform cross-validation
+                cv_scores = cross_val_score(model, X_processed, y, cv=cv)
+                
+                # Train model on full dataset
+                model.fit(X_processed, y)
+                
+                # Get predictions
+                y_pred = model.predict(X_processed)
+                
+                # Calculate metrics
+                metrics = {
+                    'accuracy': accuracy_score(y, y_pred),
+                    'precision': precision_score(y, y_pred, average='weighted'),
+                    'recall': recall_score(y, y_pred, average='weighted'),
+                    'f1': f1_score(y, y_pred, average='weighted'),
+                    'cv_mean': cv_scores.mean(),
+                    'cv_std': cv_scores.std()
+                }
+                
+                results[name] = metrics
+                
+                # Update best model
+                if metrics['cv_mean'] > self.best_score:
+                    self.best_score = metrics['cv_mean']
+                    self.best_model = model
+                    self.best_model_name = name
         
         return results
     
@@ -94,14 +154,17 @@ class CrocodileClassifier:
         if self.best_model is None:
             raise ValueError("No model has been trained yet!")
         
+        # Preprocess features
+        X_processed = self.preprocess_features(X, fit=False)
+        
         # Get probability scores
-        proba = self.best_model.predict_proba(X)
+        proba = self.best_model.predict_proba(X_processed)
         
         # Get maximum probability for each prediction
         confidence_scores = np.max(proba, axis=1)
         
         # Make predictions
-        predictions = self.best_model.predict(X)
+        predictions = self.best_model.predict(X_processed)
         
         # Set low confidence predictions to "Unknown"
         predictions[confidence_scores < confidence_threshold] = "Unknown"

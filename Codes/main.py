@@ -48,10 +48,24 @@ class CrocodilePipeline:
             # Check if this folder has already been processed
             cropped_dir = os.path.join(self.output_dirs['training'], croc_dir)
             if os.path.exists(cropped_dir) and os.path.isdir(cropped_dir):
-                print(f"\nSkipping {croc_dir} - already processed")
+                print(f"\nLoading features from processed folder: {croc_dir}")
+                # Load features from processed images
+                for img_file in os.listdir(cropped_dir):
+                    if not img_file.endswith('.jpg'):
+                        continue
+                    
+                    # Load cropped image
+                    img_path = os.path.join(cropped_dir, img_file)
+                    cropped_img = cv2.imread(img_path)
+                    
+                    # Extract features
+                    img_features = self.feature_extractor.extract_all_features(cropped_img)
+                    
+                    features.append(img_features)
+                    labels.append(croc_dir)
                 continue
             
-            print(f"\nProcessing {croc_dir}...")
+            print(f"\nProcessing new folder: {croc_dir}...")
             
             # Process each image in the folder
             for img_file in os.listdir(croc_path):
@@ -79,6 +93,9 @@ class CrocodilePipeline:
                 features.append(img_features)
                 labels.append(croc_dir)
         
+        if len(features) == 0:
+            raise ValueError("No features extracted! Check if the dataset directories are correct.")
+            
         return np.array(features), np.array(labels)
     
     def process_test_data(self, test_dir, is_known=True):
