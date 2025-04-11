@@ -2,3 +2,4 @@ venv/
 dataset/
 cropped/
 __pycache__/
+removed/

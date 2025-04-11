@@ -45,6 +45,12 @@ class CrocodilePipeline:
             if not os.path.isdir(croc_path):
                 continue
             
+            # Check if this folder has already been processed
+            cropped_dir = os.path.join(self.output_dirs['training'], croc_dir)
+            if os.path.exists(cropped_dir) and os.path.isdir(cropped_dir):
+                print(f"\nSkipping {croc_dir} - already processed")
+                continue
+            
             print(f"\nProcessing {croc_dir}...")
             
             # Process each image in the folder
@@ -140,12 +146,29 @@ class CrocodilePipeline:
             for metric_name, value in metrics.items():
                 print(f"{metric_name}: {value:.4f}")
         
+        # Generate and save visualizations
+        print("\nGenerating visualizations...")
+        
+        # Plot model comparison
+        self.classifier.plot_model_comparison(results)
+        print("Saved model comparison plot")
+        
+        # Plot cross-validation results
+        self.classifier.plot_cross_validation_results(results)
+        print("Saved cross-validation results plot")
+        
+        # Plot ROC curves
+        self.classifier.plot_roc_curves(X_train, y_train)
+        print("Saved ROC curves plot")
+        
         # Plot confusion matrix for training data
         y_pred = self.classifier.predict(X_train)[0]
         self.classifier.plot_confusion_matrix(y_train, y_pred, np.unique(y_train))
+        print("Saved confusion matrix plot")
         
         # Plot feature importance
         self.classifier.plot_feature_importance()
+        print("Saved feature importance plot")
         
         # Process known test data
         print("\nProcessing known test data...")
@@ -153,6 +176,10 @@ class CrocodilePipeline:
         
         # Make predictions for known test data
         y_pred_known, confidence_known = self.classifier.predict(X_test_known)
+        
+        # Plot confidence distribution for known test data
+        self.classifier.plot_confidence_distribution(confidence_known, y_pred_known)
+        print("Saved confidence distribution plot for known test data")
         
         # Print known test results
         print("\nKnown Test Results:")
@@ -166,10 +193,17 @@ class CrocodilePipeline:
         # Make predictions for unknown test data
         y_pred_unknown, confidence_unknown = self.classifier.predict(X_test_unknown)
         
+        # Plot confidence distribution for unknown test data
+        self.classifier.plot_confidence_distribution(confidence_unknown, y_pred_unknown, 
+                                                  filename='confidence_distribution_unknown.png')
+        print("Saved confidence distribution plot for unknown test data")
+        
         # Print unknown test results
         print("\nUnknown Test Results:")
         print(f"Number of Unknown Predictions: {np.sum(y_pred_unknown == 'Unknown')}")
         print(f"Average Confidence: {np.mean(confidence_unknown):.4f}")
+        
+        print("\nAll visualizations have been saved to the 'plots' directory.")
 
 if __name__ == "__main__":
     # Initialize pipeline
