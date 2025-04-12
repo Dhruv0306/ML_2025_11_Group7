@@ -1,125 +1,81 @@
 import cv2
 import numpy as np
-from skimage.feature import local_binary_pattern
-from skimage.feature import hog
+from skimage.feature import local_binary_pattern, hog
+import os
+from concurrent.futures import ThreadPoolExecutor
+from joblib import Memory
+from tqdm import tqdm
+import time
 
 class FeatureExtractor:
     def __init__(self):
         """
-        Initialize feature extractors
+        Initialize feature extractors with caching
         """
-        # Initialize SIFT
+        print("[DEBUG] Initializing FeatureExtractor...")
+        # Initialize feature extractors
         self.sift = cv2.SIFT_create()
-        
-        # Initialize ORB
         self.orb = cv2.ORB_create()
         
-        # LBP parameters
+        # Parameters
         self.lbp_radius = 3
         self.lbp_n_points = 8 * self.lbp_radius
-        
-        # HOG parameters
         self.hog_orientations = 9
         self.hog_pixels_per_cell = (8, 8)
         self.hog_cells_per_block = (2, 2)
+        
+        # Setup caching in current directory
+        cache_dir = 'feature_cache'
+        os.makedirs(cache_dir, exist_ok=True)
+        print(f"[DEBUG] Cache directory: {cache_dir}")
+        self.memory = Memory(cache_dir, verbose=0)
+        
+        # Cache the feature extraction methods
+        print("[DEBUG] Setting up feature caching...")
+        self.cached_sift = self.memory.cache(self._extract_sift)
+        self.cached_hog = self.memory.cache(self._extract_hog)
+        self.cached_lbp = self.memory.cache(self._extract_lbp)
+        self.cached_orb = self.memory.cache(self._extract_orb)
+        print("[DEBUG] FeatureExtractor initialization complete")
     
-    def extract_sift(self, image):
-        """
-        Extract SIFT features from image
-        
-        Args:
-            image (numpy.ndarray): Input image
-            
-        Returns:
-            numpy.ndarray: SIFT features
-        """
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Detect keypoints and compute descriptors
+    def _extract_sift(self, gray):
+        """Internal SIFT feature extraction"""
         keypoints, descriptors = self.sift.detectAndCompute(gray, None)
-        
-        # If no features found, return zero vector
         if descriptors is None:
+            print("[DEBUG] No SIFT features found, returning zero vector")
             return np.zeros(128)
-        
-        # Return mean of descriptors
         return np.mean(descriptors, axis=0)
     
-    def extract_hog(self, image):
-        """
-        Extract HOG features from image
-        
-        Args:
-            image (numpy.ndarray): Input image
-            
-        Returns:
-            numpy.ndarray: HOG features
-        """
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Extract HOG features
-        features = hog(gray, 
-                      orientations=self.hog_orientations,
-                      pixels_per_cell=self.hog_pixels_per_cell,
-                      cells_per_block=self.hog_cells_per_block,
-                      block_norm='L2-Hys')
-        
-        return features
+    def _extract_hog(self, gray):
+        """Internal HOG feature extraction"""
+        return hog(gray, 
+                  orientations=self.hog_orientations,
+                  pixels_per_cell=self.hog_pixels_per_cell,
+                  cells_per_block=self.hog_cells_per_block,
+                  block_norm='L2-Hys')
     
-    def extract_lbp(self, image):
-        """
-        Extract Local Binary Pattern features from image
-        
-        Args:
-            image (numpy.ndarray): Input image
-            
-        Returns:
-            numpy.ndarray: LBP features
-        """
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Extract LBP features
+    def _extract_lbp(self, gray):
+        """Internal LBP feature extraction"""
         lbp = local_binary_pattern(gray, 
                                  self.lbp_n_points,
                                  self.lbp_radius,
                                  method='uniform')
-        
-        # Compute histogram
         hist, _ = np.histogram(lbp.ravel(), 
                              bins=np.arange(0, self.lbp_n_points + 3),
                              density=True)
-        
         return hist
     
-    def extract_orb(self, image):
-        """
-        Extract ORB features from image
-        
-        Args:
-            image (numpy.ndarray): Input image
-            
-        Returns:
-            numpy.ndarray: ORB features
-        """
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Detect keypoints and compute descriptors
+    def _extract_orb(self, gray):
+        """Internal ORB feature extraction"""
         keypoints, descriptors = self.orb.detectAndCompute(gray, None)
-        
-        # If no features found, return zero vector
         if descriptors is None:
+            print("[DEBUG] No ORB features found, returning zero vector")
             return np.zeros(32)
-        
-        # Return mean of descriptors
         return np.mean(descriptors, axis=0)
     
     def extract_all_features(self, image):
         """
-        Extract all features from image
+        Extract all features from image using parallel processing
         
         Args:
             image (numpy.ndarray): Input image
@@ -127,18 +83,55 @@ class FeatureExtractor:
         Returns:
             numpy.ndarray: Concatenated features
         """
-        # Extract individual features
-        sift_features = self.extract_sift(image)
-        hog_features = self.extract_hog(image)
-        lbp_features = self.extract_lbp(image)
-        orb_features = self.extract_orb(image)
+        start_time = time.time()
+        
+        # Convert to grayscale once
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Extract features in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {
+                'sift': executor.submit(self.cached_sift, gray),
+                'hog': executor.submit(self.cached_hog, gray),
+                'lbp': executor.submit(self.cached_lbp, gray),
+                'orb': executor.submit(self.cached_orb, gray)
+            }
+            
+            # Get results
+            features = {name: future.result() for name, future in futures.items()}
         
         # Concatenate all features
         all_features = np.concatenate([
-            sift_features,
-            hog_features,
-            lbp_features,
-            orb_features
+            features['sift'],
+            features['hog'],
+            features['lbp'],
+            features['orb']
         ])
         
-        return all_features 
+        return all_features
+    
+    def extract_features_batch(self, images, desc="Extracting features"):
+        """
+        Extract features from a batch of images with progress bar
+        
+        Args:
+            images (list): List of images
+            desc (str): Description for progress bar
+            
+        Returns:
+            numpy.ndarray: Array of features
+        """
+        print(f"\n[DEBUG] Starting batch processing of {len(images)} images")
+        start_time = time.time()
+        
+        features = []
+        for img in tqdm(images, desc=desc, unit="img"):
+            features.append(self.extract_all_features(img))
+        
+        total_time = time.time() - start_time
+        print(f"\n[DEBUG] Batch processing complete:")
+        print(f"[DEBUG] Total time: {total_time:.2f}s")
+        print(f"[DEBUG] Average time per image: {total_time/len(images):.2f}s")
+        print(f"[DEBUG] Final feature array shape: {np.array(features).shape}")
+        
+        return np.array(features) 
