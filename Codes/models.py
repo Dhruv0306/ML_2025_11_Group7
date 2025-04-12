@@ -56,7 +56,7 @@ class CrocodileClassifier:
         
         # Initialize preprocessing components
         self.scaler = StandardScaler()
-        self.pca = IncrementalPCA(n_components=0.95, batch_size=1000)
+        self.pca = IncrementalPCA(n_components=1000, batch_size=1000)
         
         # Create plots directory if it doesn't exist
         self.plots_dir = 'plots'
