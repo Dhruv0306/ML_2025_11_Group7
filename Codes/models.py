@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, roc_curve, auc
 from sklearn.preprocessing import label_binarize, StandardScaler
-from sklearn.decomposition import PCA
+from sklearn.decomposition import IncrementalPCA
 from itertools import cycle
 import os
 from joblib import parallel_backend
@@ -54,9 +54,9 @@ class CrocodileClassifier:
         self.best_model_name = None
         self.best_score = 0
         
-        # Initialize PCA and Scaler
-        self.pca = PCA(n_components=0.95)  # Keep 95% of variance
+        # Initialize preprocessing components
         self.scaler = StandardScaler()
+        self.pca = IncrementalPCA(n_components=0.95, batch_size=1000)
         
         # Create plots directory if it doesn't exist
         self.plots_dir = 'plots'
@@ -64,27 +64,32 @@ class CrocodileClassifier:
     
     def preprocess_features(self, X, fit=False):
         """
-        Preprocess features using scaling and PCA
+        Preprocess features using scaling and dimensionality reduction
         
         Args:
-            X (numpy.ndarray): Feature matrix
-            fit (bool): Whether to fit the transformers
+            X (numpy.ndarray): Input features
+            fit (bool): Whether to fit the preprocessing components
             
         Returns:
-            numpy.ndarray: Preprocessed features
+            numpy.ndarray: Processed features
         """
+        print(f"Original feature dimensions: {X.shape[1]}")
+        
+        # Scale features
         if fit:
-            # Scale the features
             X_scaled = self.scaler.fit_transform(X)
-            # Apply PCA
-            X_reduced = self.pca.fit_transform(X_scaled)
-            print(f"\nReduced feature dimensions from {X.shape[1]} to {X_reduced.shape[1]}")
-            print(f"Explained variance ratio: {sum(self.pca.explained_variance_ratio_):.4f}")
-            return X_reduced
         else:
-            # Transform using pre-fitted scaler and PCA
             X_scaled = self.scaler.transform(X)
-            return self.pca.transform(X_scaled)
+        
+        # Reduce dimensionality using IncrementalPCA
+        if fit:
+            X_reduced = self.pca.fit_transform(X_scaled)
+            print(f"Reduced feature dimensions: {X_reduced.shape[1]}")
+            print(f"Explained variance ratio: {np.sum(self.pca.explained_variance_ratio_):.3f}")
+        else:
+            X_reduced = self.pca.transform(X_scaled)
+        
+        return X_reduced
     
     def train_and_evaluate(self, X, y, cv=5):
         """
