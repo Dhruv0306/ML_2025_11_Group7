@@ -1,407 +1,290 @@
 import numpy as np
-from sklearn.svm import LinearSVC
-from sklearn.calibration import CalibratedClassifierCV
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import IncrementalPCA
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
-from xgboost import XGBClassifier
-from sklearn.model_selection import cross_val_score
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix, roc_curve
+from sklearn.model_selection import cross_val_score, StratifiedKFold
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, roc_curve, auc
-from sklearn.preprocessing import label_binarize, StandardScaler
-from sklearn.decomposition import IncrementalPCA
-from itertools import cycle
+from tqdm import tqdm
+import joblib
 import os
-from joblib import parallel_backend
+from concurrent.futures import ThreadPoolExecutor
+import warnings
+warnings.filterwarnings('ignore')
 
 class CrocodileClassifier:
     def __init__(self):
         """
-        Initialize classification models
+        Initialize the crocodile classifier with memory-efficient components
         """
-        # Initialize models with optimized parameters
-        linear_svc = LinearSVC(
-            dual="auto",  # Let sklearn choose the best algorithm
-            max_iter=2000,  # Increase max iterations
-            random_state=42
-        )
+        # Initialize scaler with memory-efficient settings
+        self.scaler = StandardScaler()
         
-        # Wrap LinearSVC with CalibratedClassifierCV to get probability estimates
+        # Initialize PCA with consistent components and batch size
+        self.pca = IncrementalPCA(n_components=1500, batch_size=1500)
+        
+        # Initialize models with optimized parameters
         self.models = {
-            'svm': CalibratedClassifierCV(
-                linear_svc,
-                cv=3,  # Reduced CV folds for faster training
-                n_jobs=-1  # Use all CPU cores
-            ),
             'random_forest': RandomForestClassifier(
                 n_estimators=100,
-                random_state=42,
-                n_jobs=-1
+                max_depth=20,
+                min_samples_split=5,
+                n_jobs=-1,
+                random_state=42
+            ),
+            'svm': SVC(
+                kernel='linear',
+                probability=True,
+                random_state=42
             ),
             'knn': KNeighborsClassifier(
                 n_neighbors=5,
                 n_jobs=-1
-            ),
-            'xgboost': XGBClassifier(
-                random_state=42,
-                n_jobs=-1
             )
         }
         
-        # Store best model
-        self.best_model = None
-        self.best_model_name = None
-        self.best_score = 0
-        
-        # Initialize preprocessing components
-        self.scaler = StandardScaler()
-        self.pca = IncrementalPCA(n_components=1000, batch_size=1000)
-        
         # Create plots directory if it doesn't exist
-        self.plots_dir = 'plots'
-        os.makedirs(self.plots_dir, exist_ok=True)
+        os.makedirs('plots', exist_ok=True)
     
-    def preprocess_features(self, X, fit=False):
+    def preprocess_features(self, features, is_training=True):
         """
-        Preprocess features using scaling and dimensionality reduction
+        Preprocess features with memory-efficient batch processing
         
         Args:
-            X (numpy.ndarray): Input features
-            fit (bool): Whether to fit the preprocessing components
+            features (np.ndarray): Input features
+            is_training (bool): Whether this is training data
             
         Returns:
-            numpy.ndarray: Processed features
+            np.ndarray: Preprocessed features
         """
-        print(f"Original feature dimensions: {X.shape[1]}")
+        print("\n=== Feature Preprocessing ===")
+        print(f"Original feature dimension: {features.shape[1]}")
         
-        # Scale features
-        if fit:
-            X_scaled = self.scaler.fit_transform(X)
-        else:
-            X_scaled = self.scaler.transform(X)
+        # Process in smaller batches to reduce memory usage
+        batch_size = 1000
+        n_samples = features.shape[0]
+        processed_features = []
         
-        # Reduce dimensionality using IncrementalPCA
-        if fit:
-            X_reduced = self.pca.fit_transform(X_scaled)
-            print(f"Reduced feature dimensions: {X_reduced.shape[1]}")
-            print(f"Explained variance ratio: {np.sum(self.pca.explained_variance_ratio_):.3f}")
-        else:
-            X_reduced = self.pca.transform(X_scaled)
+        # Scale features in batches
+        print("Scaling features...")
+        for i in tqdm(range(0, n_samples, batch_size)):
+            batch = features[i:i+batch_size]
+            if is_training:
+                scaled_batch = self.scaler.fit_transform(batch)
+            else:
+                scaled_batch = self.scaler.transform(batch)
+            processed_features.append(scaled_batch)
         
-        return X_reduced
+        features = np.vstack(processed_features)
+        print(f"Features scaled. Memory usage reduced by {features.nbytes / (1024**2):.2f} MB")
+        
+        # Apply PCA in batches
+        print("Applying PCA...")
+        if is_training:
+            # Fit PCA on a subset of data
+            subset_size = min(10000, n_samples)
+            subset_indices = np.random.choice(n_samples, subset_size, replace=False)
+            self.pca.fit(features[subset_indices])
+            print(f"Explained variance ratio: {np.sum(self.pca.explained_variance_ratio_):.4f}")
+        
+        # Transform in batches
+        processed_features = []
+        for i in tqdm(range(0, n_samples, batch_size)):
+            batch = features[i:i+batch_size]
+            reduced_batch = self.pca.transform(batch)
+            processed_features.append(reduced_batch)
+        
+        features = np.vstack(processed_features)
+        print(f"PCA applied. Reduced dimension: {features.shape[1]}")
+        print(f"Memory usage reduced by {features.nbytes / (1024**2):.2f} MB")
+        print("===========================\n")
+        
+        return features
     
-    def train_and_evaluate(self, X, y, cv=5):
+    def train_and_evaluate(self, X, y):
         """
-        Train and evaluate all models using cross-validation
+        Train and evaluate models with memory-efficient processing
         
         Args:
-            X (numpy.ndarray): Feature matrix
-            y (numpy.ndarray): Target labels
-            cv (int): Number of cross-validation folds
+            X (np.ndarray): Training features
+            y (np.ndarray): Training labels
             
         Returns:
-            dict: Evaluation metrics for each model
+            dict: Evaluation results
         """
-        # Print original feature dimensions
-        print(f"\nOriginal feature dimensions: {X.shape[1]}")
+        print("\n=== Model Training and Evaluation ===")
         
         # Preprocess features
-        X_processed = self.preprocess_features(X, fit=True)
+        X_processed = self.preprocess_features(X, is_training=True)
         
         results = {}
+        for name, model in self.models.items():
+            print(f"\nTraining {name}...")
+            
+            # Train model
+            model.fit(X_processed, y)
+            
+            # Evaluate with cross-validation
+            cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+            cv_scores = cross_val_score(model, X_processed, y, cv=cv, n_jobs=-1)
+            
+            # Make predictions
+            y_pred = model.predict(X_processed)
+            y_prob = model.predict_proba(X_processed)
+            
+            # Calculate metrics
+            results[name] = {
+                'accuracy': accuracy_score(y, y_pred),
+                'precision': precision_score(y, y_pred, average='weighted'),
+                'recall': recall_score(y, y_pred, average='weighted'),
+                'f1': f1_score(y, y_pred, average='weighted'),
+                'roc_auc': roc_auc_score(y, y_prob, multi_class='ovr'),
+                'cv_mean': cv_scores.mean(),
+                'cv_std': cv_scores.std()
+            }
+            
+            print(f"Completed {name}")
         
-        # Use parallel backend for faster computation
-        with parallel_backend('threading', n_jobs=-1):
-            for name, model in self.models.items():
-                print(f"\nTraining {name}...")
-                
-                # Perform cross-validation
-                cv_scores = cross_val_score(model, X_processed, y, cv=cv)
-                
-                # Train model on full dataset
-                model.fit(X_processed, y)
-                
-                # Get predictions
-                y_pred = model.predict(X_processed)
-                
-                # Calculate metrics
-                metrics = {
-                    'accuracy': accuracy_score(y, y_pred),
-                    'precision': precision_score(y, y_pred, average='weighted'),
-                    'recall': recall_score(y, y_pred, average='weighted'),
-                    'f1': f1_score(y, y_pred, average='weighted'),
-                    'cv_mean': cv_scores.mean(),
-                    'cv_std': cv_scores.std()
-                }
-                
-                results[name] = metrics
-                
-                # Update best model
-                if metrics['cv_mean'] > self.best_score:
-                    self.best_score = metrics['cv_mean']
-                    self.best_model = model
-                    self.best_model_name = name
-        
+        print("\n=== Training Complete ===\n")
         return results
     
-    def predict(self, X, confidence_threshold=0.5):
+    def predict(self, X):
         """
-        Make predictions using the best model
+        Make predictions with memory-efficient processing
         
         Args:
-            X (numpy.ndarray): Feature matrix
-            confidence_threshold (float): Threshold for classification confidence
+            X (np.ndarray): Input features
             
         Returns:
-            tuple: (predictions, confidence_scores)
+            tuple: (predictions, confidence scores)
         """
-        if self.best_model is None:
-            raise ValueError("No model has been trained yet!")
-        
         # Preprocess features
-        X_processed = self.preprocess_features(X, fit=False)
+        X_processed = self.preprocess_features(X, is_training=False)
         
-        # Get probability scores
-        proba = self.best_model.predict_proba(X_processed)
+        # Get predictions from all models
+        predictions = []
+        confidences = []
         
-        # Get maximum probability for each prediction
-        confidence_scores = np.max(proba, axis=1)
-        
-        # Make predictions
-        predictions = self.best_model.predict(X_processed)
-        
-        # Set low confidence predictions to "Unknown"
-        predictions[confidence_scores < confidence_threshold] = "Unknown"
-        
-        return predictions, confidence_scores
-    
-    def plot_confusion_matrix(self, y_true, y_pred, labels):
-        """
-        Plot confusion matrix
-        
-        Args:
-            y_true (numpy.ndarray): True labels
-            y_pred (numpy.ndarray): Predicted labels
-            labels (list): List of label names
-        """
-        # Compute confusion matrix
-        cm = confusion_matrix(y_true, y_pred, labels=labels)
-        
-        # Plot confusion matrix
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                   xticklabels=labels, yticklabels=labels)
-        plt.title('Confusion Matrix')
-        plt.ylabel('True Label')
-        plt.xlabel('Predicted Label')
-        plt.tight_layout()
-        
-        # Save plot
-        plt.savefig(os.path.join(self.plots_dir, 'confusion_matrix.png'), dpi=300, bbox_inches='tight')
-        
-        # Display plot
-        plt.show()
-        
-        # Close the figure to free memory
-        plt.close()
-    
-    def plot_feature_importance(self, feature_names=None):
-        """
-        Plot feature importance for models that support it
-        
-        Args:
-            feature_names (list, optional): Names of features
-        """
-        if self.best_model_name in ['random_forest', 'xgboost']:
-            # Get feature importance
-            importance = self.best_model.feature_importances_
+        for model in self.models.values():
+            pred = model.predict(X_processed)
+            prob = model.predict_proba(X_processed)
+            confidence = np.max(prob, axis=1)
             
-            # Create feature names if not provided
-            if feature_names is None:
-                feature_names = [f'Feature_{i}' for i in range(len(importance))]
+            predictions.append(pred)
+            confidences.append(confidence)
+        
+        # Use ensemble voting
+        final_predictions = []
+        final_confidence = []
+        
+        for i in range(len(X)):
+            votes = {}
+            for j, pred in enumerate(predictions):
+                if pred[i] not in votes:
+                    votes[pred[i]] = []
+                votes[pred[i]].append(confidences[j][i])
             
-            # Sort features by importance
-            indices = np.argsort(importance)[::-1]
+            # Get prediction with highest average confidence
+            best_pred = max(votes.items(), key=lambda x: np.mean(x[1]))[0]
+            avg_confidence = np.mean(votes[best_pred])
             
-            # Plot feature importance
-            plt.figure(figsize=(10, 6))
-            plt.title('Feature Importance')
-            plt.bar(range(len(importance)), importance[indices])
-            plt.xticks(range(len(importance)), [feature_names[i] for i in indices], rotation=45)
-            plt.tight_layout()
-            
-            # Save plot
-            plt.savefig(os.path.join(self.plots_dir, 'feature_importance.png'), dpi=300, bbox_inches='tight')
-            
-            # Display plot
-            plt.show()
-            
-            # Close the figure to free memory
-            plt.close()
+            final_predictions.append(best_pred)
+            final_confidence.append(avg_confidence)
+        
+        return np.array(final_predictions), np.array(final_confidence)
     
     def plot_model_comparison(self, results):
-        """
-        Plot comparison of different models' performance metrics
+        """Plot model comparison visualization"""
+        metrics = ['accuracy', 'precision', 'recall', 'f1', 'roc_auc']
+        x = np.arange(len(metrics))
+        width = 0.25
         
-        Args:
-            results (dict): Dictionary containing evaluation metrics for each model
-        """
-        metrics = ['accuracy', 'precision', 'recall', 'f1']
-        model_names = list(results.keys())
-        
-        # Prepare data for plotting
-        metric_values = {metric: [results[model][metric] for model in model_names] 
-                        for metric in metrics}
-        
-        # Create bar plot
         plt.figure(figsize=(12, 6))
-        x = np.arange(len(model_names))
-        width = 0.2
+        for i, (name, scores) in enumerate(results.items()):
+            plt.bar(x + i*width, [scores[m] for m in metrics], width, label=name)
         
-        for i, metric in enumerate(metrics):
-            plt.bar(x + i*width, metric_values[metric], width, label=metric)
-        
-        plt.xlabel('Models')
+        plt.xlabel('Metrics')
         plt.ylabel('Score')
-        plt.title('Model Performance Comparison')
-        plt.xticks(x + width*1.5, model_names, rotation=45)
+        plt.title('Model Comparison')
+        plt.xticks(x + width, metrics)
         plt.legend()
         plt.tight_layout()
-        
-        # Save plot
-        plt.savefig(os.path.join(self.plots_dir, 'model_comparison.png'), dpi=300, bbox_inches='tight')
-        
-        # Display plot
-        plt.show()
-        
-        # Close the figure to free memory
+        plt.savefig('plots/model_comparison.png')
         plt.close()
     
     def plot_cross_validation_results(self, results):
-        """
-        Plot cross-validation results with error bars
-        
-        Args:
-            results (dict): Dictionary containing evaluation metrics for each model
-        """
-        model_names = list(results.keys())
-        cv_means = [results[model]['cv_mean'] for model in model_names]
-        cv_stds = [results[model]['cv_std'] for model in model_names]
-        
+        """Plot cross-validation results"""
         plt.figure(figsize=(10, 6))
-        plt.errorbar(model_names, cv_means, yerr=cv_stds, fmt='o', capsize=5)
-        plt.title('Cross-validation Results')
+        for name, scores in results.items():
+            plt.errorbar(name, scores['cv_mean'], yerr=scores['cv_std'], 
+                        fmt='o', capsize=5, label=name)
+        
         plt.xlabel('Models')
-        plt.ylabel('CV Score')
-        plt.xticks(rotation=45)
-        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.ylabel('Cross-validation Score')
+        plt.title('Cross-validation Results')
+        plt.legend()
         plt.tight_layout()
-        
-        # Save plot
-        plt.savefig(os.path.join(self.plots_dir, 'cross_validation_results.png'), dpi=300, bbox_inches='tight')
-        
-        # Display plot
-        plt.show()
-        
-        # Close the figure to free memory
+        plt.savefig('plots/cross_validation.png')
         plt.close()
     
     def plot_roc_curves(self, X, y):
-        """
-        Plot ROC curves for each class
-        
-        Args:
-            X (numpy.ndarray): Feature matrix
-            y (numpy.ndarray): Target labels
-        """
-        # Binarize the labels for ROC curve calculation
-        classes = np.unique(y)
-        y_bin = label_binarize(y, classes=classes)
-        n_classes = y_bin.shape[1]
-        
-        # Compute ROC curve and ROC area for each class
-        fpr = dict()
-        tpr = dict()
-        roc_auc = dict()
-        
-        for i in range(n_classes):
-            proba = self.best_model.predict_proba(X)[:, i]
-            fpr[i], tpr[i], _ = roc_curve(y_bin[:, i], proba)
-            roc_auc[i] = auc(fpr[i], tpr[i])
-        
-        # Plot ROC curves
+        """Plot ROC curves for each class"""
+        X_processed = self.preprocess_features(X, is_training=False)
         plt.figure(figsize=(10, 8))
-        colors = cycle(['blue', 'red', 'green', 'yellow', 'purple'])
         
-        for i, color in zip(range(n_classes), colors):
-            plt.plot(fpr[i], tpr[i], color=color, lw=2,
-                    label=f'ROC curve (class {classes[i]}, AUC = {roc_auc[i]:0.2f})')
+        for name, model in self.models.items():
+            y_prob = model.predict_proba(X_processed)
+            for i, class_name in enumerate(np.unique(y)):
+                fpr, tpr, _ = roc_curve(y == class_name, y_prob[:, i])
+                plt.plot(fpr, tpr, label=f'{name} - {class_name}')
         
-        plt.plot([0, 1], [0, 1], 'k--', lw=2)
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
+        plt.plot([0, 1], [0, 1], 'k--')
         plt.xlabel('False Positive Rate')
         plt.ylabel('True Positive Rate')
-        plt.title('ROC Curves for Each Class')
-        plt.legend(loc="lower right")
-        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.title('ROC Curves')
+        plt.legend()
         plt.tight_layout()
-        
-        # Save plot
-        plt.savefig(os.path.join(self.plots_dir, 'roc_curves.png'), dpi=300, bbox_inches='tight')
-        
-        # Display plot
-        plt.show()
-        
-        # Close the figure to free memory
+        plt.savefig('plots/roc_curves.png')
         plt.close()
     
-    def plot_confidence_distribution(self, confidence_scores, predictions, threshold=0.5, filename='confidence_distribution.png'):
-        """
-        Plot distribution of confidence scores
-        
-        Args:
-            confidence_scores (numpy.ndarray): Confidence scores from predictions
-            predictions (numpy.ndarray): Predicted labels
-            threshold (float): Confidence threshold used for classification
-            filename (str): Name of the file to save the plot
-        """
-        plt.figure(figsize=(10, 6))
-        
-        # Plot histogram of confidence scores
-        plt.hist(confidence_scores, bins=30, alpha=0.7)
-        
-        # Add vertical line for threshold
-        plt.axvline(x=threshold, color='r', linestyle='--', 
-                   label=f'Threshold ({threshold})')
-        
-        # Add text with statistics
-        known_count = np.sum(confidence_scores >= threshold)
-        unknown_count = np.sum(confidence_scores < threshold)
-        total = len(confidence_scores)
-        
-        stats_text = f'Known: {known_count}/{total} ({known_count/total*100:.1f}%)\n'
-        stats_text += f'Unknown: {unknown_count}/{total} ({unknown_count/total*100:.1f}%)'
-        
-        plt.text(0.98, 0.95, stats_text,
-                transform=plt.gca().transAxes,
-                verticalalignment='top',
-                horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        
-        plt.title('Distribution of Confidence Scores')
-        plt.xlabel('Confidence Score')
-        plt.ylabel('Count')
-        plt.legend()
-        plt.grid(True, linestyle='--', alpha=0.7)
+    def plot_confusion_matrix(self, y_true, y_pred, classes):
+        """Plot confusion matrix"""
+        cm = confusion_matrix(y_true, y_pred)
+        plt.figure(figsize=(12, 10))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                    xticklabels=classes, yticklabels=classes)
+        plt.xlabel('Predicted')
+        plt.ylabel('True')
+        plt.title('Confusion Matrix')
         plt.tight_layout()
+        plt.savefig('plots/confusion_matrix.png')
+        plt.close()
+    
+    def plot_feature_importance(self):
+        """Plot feature importance from Random Forest"""
+        rf_model = self.models['random_forest']
+        importance = rf_model.feature_importances_
         
-        # Save plot
-        plt.savefig(os.path.join(self.plots_dir, filename), dpi=300, bbox_inches='tight')
-        
-        # Display plot
-        plt.show()
-        
-        # Close the figure to free memory
+        plt.figure(figsize=(12, 6))
+        plt.bar(range(len(importance)), importance)
+        plt.xlabel('Feature Index')
+        plt.ylabel('Importance')
+        plt.title('Feature Importance')
+        plt.tight_layout()
+        plt.savefig('plots/feature_importance.png')
+        plt.close()
+    
+    def plot_confidence_distribution(self, confidence, predictions, filename='confidence_distribution.png'):
+        """Plot confidence distribution"""
+        plt.figure(figsize=(10, 6))
+        plt.hist(confidence, bins=50, alpha=0.7)
+        plt.xlabel('Confidence')
+        plt.ylabel('Count')
+        plt.title('Confidence Distribution')
+        plt.tight_layout()
+        plt.savefig(f'plots/{filename}')
         plt.close() 
