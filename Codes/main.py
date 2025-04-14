@@ -136,7 +136,7 @@ class CrocodilePipeline:
     
     def process_test_data(self, test_dir, is_known=True):
         """
-        Process test data: crop images and extract features
+        Process test data: crop images and extract features with improved cropping
         
         Args:
             test_dir (str): Path to test data directory
@@ -164,8 +164,31 @@ class CrocodilePipeline:
                 # Get image path
                 img_path = os.path.join(test_dir, img_file)
                 
-                # Crop image (center crop for unknown)
-                cropped_img = crop_image(img_path)
+                # For known test data, try to use XML if available
+                if is_known:
+                    xml_path = os.path.join(test_dir, img_file.replace('.jpg', '.xml'))
+                    if os.path.exists(xml_path):
+                        try:
+                            bbox = parse_voc_xml(xml_path)
+                            cropped_img = crop_image(img_path, bbox)
+                        except Exception as e:
+                            print(f"  Warning: Failed to parse XML {xml_path}, using center crop instead")
+                            cropped_img = crop_image(img_path, output_size=(224, 224))
+                    else:
+                        print(f"  Warning: No XML found for {img_file}, using center crop")
+                        cropped_img = crop_image(img_path, output_size=(224, 224))
+                else:
+                    # For unknown test data, use center crop with larger size
+                    cropped_img = crop_image(img_path, output_size=(448, 448))
+                    # Then take center region to match training size
+                    h, w = cropped_img.shape[:2]
+                    start_h = h//4
+                    start_w = w//4
+                    cropped_img = cropped_img[start_h:start_h+224, start_w:start_w+224]
+                
+                # Verify cropped image quality
+                if cropped_img.shape[0] != 224 or cropped_img.shape[1] != 224:
+                    cropped_img = cv2.resize(cropped_img, (224, 224))
                 
                 # Save cropped image
                 output_dir = self.output_dirs['test_known' if is_known else 'test_unknown']
@@ -178,6 +201,9 @@ class CrocodilePipeline:
                 features.append(img_features)
                 if is_known:
                     labels.append(extract_croc_id_from_filename(img_file))
+                
+                print(f"  Successfully processed {img_file}")
+                
             except Exception as e:
                 print(f"  Error processing {img_file}: {str(e)}")
                 continue

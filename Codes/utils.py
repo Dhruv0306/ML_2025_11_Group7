@@ -79,4 +79,32 @@ def extract_croc_id_from_filename(filename):
     Returns:
         str: Crocodile ID (e.g., 'Croc1')
     """
-    return filename.split('_')[0] 
+    return filename.split('_')[0]
+
+def validate_xml(xml_path):
+    """Validate XML file for proper bounding box information"""
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        
+        objects = root.findall('.//object')
+        if not objects:
+            return False
+        
+        for obj in objects:
+            bndbox = obj.find('bndbox')
+            if bndbox is None:
+                return False
+            
+            for coord in ['xmin', 'ymin', 'xmax', 'ymax']:
+                if bndbox.find(coord) is None:
+                    return False
+                try:
+                    float(bndbox.find(coord).text)
+                except (ValueError, TypeError):
+                    return False
+        
+        return True
+    except Exception as e:
+        print(f"Error validating XML {xml_path}: {str(e)}")
+        return False 
