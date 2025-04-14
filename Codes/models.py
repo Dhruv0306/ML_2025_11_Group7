@@ -37,8 +37,12 @@ class CrocodileClassifier:
                 random_state=42
             ),
             'svm': SVC(
-                kernel='linear',
+                kernel='rbf',
+                C=10.0,
+                gamma='scale',
                 probability=True,
+                cache_size=500,
+                decision_function_shape='ovr',
                 random_state=42
             ),
             'knn': KNeighborsClassifier(
