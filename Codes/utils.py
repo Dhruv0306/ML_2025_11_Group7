@@ -107,4 +107,61 @@ def validate_xml(xml_path):
         return True
     except Exception as e:
         print(f"Error validating XML {xml_path}: {str(e)}")
-        return False 
+        return False
+
+def draw_prediction_on_image(image_path, prediction_text, confidence, output_path):
+    """
+    Draw prediction text and confidence on an image and save it.
+    
+    Args:
+        image_path (str): Path to the original image.
+        prediction_text (str): The predicted label (e.g., 'Croc123' or 'Unknown').
+        confidence (float): The prediction confidence score.
+        output_path (str): Path to save the annotated image.
+    """
+    # Read the image
+    img = cv2.imread(image_path)
+    if img is None:
+        print(f"Warning: Could not read image {image_path} for annotation.")
+        return
+
+    # Prepare the text to draw
+    label = f"Prediction: {prediction_text}"
+    conf_text = f"Confidence: {confidence:.2f}"
+
+    # Define text properties
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.7
+    font_color = (255, 255, 255)  # White
+    bg_color = (0, 0, 0)       # Black
+    thickness = 2
+    line_type = cv2.LINE_AA
+
+    # Get text size to draw a background rectangle
+    (label_width, label_height), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+    (conf_width, conf_height), _ = cv2.getTextSize(conf_text, font, font_scale, thickness)
+
+    # Position for the text (top-left corner)
+    x_label, y_label = 10, 30
+    x_conf, y_conf = 10, y_label + label_height + 10
+
+    # Draw background rectangle for label
+    cv2.rectangle(img, (x_label - 5, y_label - label_height - 5), 
+                  (x_label + label_width + 5, y_label + baseline), 
+                  bg_color, cv2.FILLED)
+    
+    # Draw background rectangle for confidence
+    cv2.rectangle(img, (x_conf - 5, y_conf - conf_height - 5), 
+                  (x_conf + conf_width + 5, y_conf + baseline), 
+                  bg_color, cv2.FILLED)
+
+    # Put text on the image
+    cv2.putText(img, label, (x_label, y_label), font, font_scale, font_color, thickness, line_type)
+    cv2.putText(img, conf_text, (x_conf, y_conf), font, font_scale, font_color, thickness, line_type)
+
+    # Create the output directory if it doesn't exist
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    # Save the annotated image
+    cv2.imwrite(output_path, img)
+    # print(f"Saved annotated image to: {output_path}") 

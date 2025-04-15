@@ -2,9 +2,10 @@ import os
 import cv2
 import numpy as np
 from pathlib import Path
-from utils import create_directory, parse_voc_xml, crop_image, extract_croc_id_from_filename
+from utils import create_directory, parse_voc_xml, crop_image, extract_croc_id_from_filename, draw_prediction_on_image
 from feature_extraction import FeatureExtractor
 from models import CrocodileClassifier
+from tqdm import tqdm
 
 class CrocodilePipeline:
     def __init__(self):
@@ -136,16 +137,17 @@ class CrocodilePipeline:
     
     def process_test_data(self, test_dir, is_known=True):
         """
-        Process test data: crop images and extract features with improved cropping
+        Process test data using trained detection model and return image paths along with features/labels.
         
         Args:
             test_dir (str): Path to test data directory
             is_known (bool): Whether the test data is for known crocodiles
             
         Returns:
-            tuple: (features, labels) if is_known else (features,)
+            tuple: (features, labels, image_paths) if is_known else (features, image_paths)
         """
         features = []
+        image_paths = [] # Store original image paths
         labels = [] if is_known else None
         total_images = 0
         
@@ -159,41 +161,21 @@ class CrocodilePipeline:
             
             total_images += 1
             print(f"\nProcessing image {total_images}: {img_file}")
+            img_path = os.path.join(test_dir, img_file)
+            image_paths.append(img_path) # Save original path
             
             try:
-                # Get image path
-                img_path = os.path.join(test_dir, img_file)
+                # Detect and crop using trained detector
+                cropped_img = self.detector.detect_and_crop(img_path)
                 
-                # For known test data, try to use XML if available
-                if is_known:
-                    xml_path = os.path.join(test_dir, img_file.replace('.jpg', '.xml'))
-                    if os.path.exists(xml_path):
-                        try:
-                            bbox = parse_voc_xml(xml_path)
-                            cropped_img = crop_image(img_path, bbox)
-                        except Exception as e:
-                            print(f"  Warning: Failed to parse XML {xml_path}, using center crop instead")
-                            cropped_img = crop_image(img_path, output_size=(224, 224))
-                    else:
-                        print(f"  Warning: No XML found for {img_file}, using center crop")
-                        cropped_img = crop_image(img_path, output_size=(224, 224))
-                else:
-                    # For unknown test data, use center crop with larger size
-                    cropped_img = crop_image(img_path, output_size=(448, 448))
-                    # Then take center region to match training size
-                    h, w = cropped_img.shape[:2]
-                    start_h = h//4
-                    start_w = w//4
-                    cropped_img = cropped_img[start_h:start_h+224, start_w:start_w+224]
+                if cropped_img is None:
+                    print(f"  Warning: No detection for {img_file}, using center crop")
+                    cropped_img = crop_image(img_path, output_size=(224, 224))
                 
-                # Verify cropped image quality
-                if cropped_img.shape[0] != 224 or cropped_img.shape[1] != 224:
-                    cropped_img = cv2.resize(cropped_img, (224, 224))
-                
-                # Save cropped image
-                output_dir = self.output_dirs['test_known' if is_known else 'test_unknown']
-                output_path = os.path.join(output_dir, img_file)
-                cv2.imwrite(output_path, cropped_img)
+                # Save cropped image (optional, maybe remove if not needed)
+                # output_dir = self.output_dirs['test_known' if is_known else 'test_unknown']
+                # output_path = os.path.join(output_dir, img_file)
+                # cv2.imwrite(output_path, cropped_img)
                 
                 # Extract features
                 img_features = self.feature_extractor.extract_all_features(cropped_img)
@@ -206,108 +188,124 @@ class CrocodilePipeline:
                 
             except Exception as e:
                 print(f"  Error processing {img_file}: {str(e)}")
+                # Append None or handle error appropriately for features/labels if needed
+                # features.append(None) # Example placeholder
                 continue
         
         print("\n=== Test Data Processing Summary ===")
         print(f"Total images processed: {total_images}")
         print(f"Total features extracted: {len(features)}")
-        if len(features) > 0:
-            print(f"Feature dimension: {len(features[0])}")
+        if len(features) > 0 and features[0] is not None:
+             print(f"Feature dimension: {len(features[0])}")
         print("=====================================\n")
         
         if is_known:
-            return np.array(features), np.array(labels)
-        return np.array(features)
+            return np.array(features), np.array(labels), image_paths
+        return np.array(features), image_paths
     
     def run_pipeline(self, training_dir, test_known_dir, test_unknown_dir):
         """
-        Run the complete pipeline
-        
-        Args:
-            training_dir (str): Path to training data directory
-            test_known_dir (str): Path to known test data directory
-            test_unknown_dir (str): Path to unknown test data directory
+        Run the complete pipeline, including saving annotated test images.
         """
         print("\n=== Starting Crocodile Identification Pipeline ===")
         print(f"Training directory: {training_dir}")
         print(f"Known test directory: {test_known_dir}")
         print(f"Unknown test directory: {test_unknown_dir}")
         print("=============================================\n")
-        
-        print("Processing training data...")
+
+        # Stage 1: Train detection model
+        # print("Training detection model...")
+        # self.train_detector(training_dir) # Assuming detector is pre-trained or loaded
+
+        # Stage 2: Process training data and train classifier
+        print("\nProcessing training data...")
         X_train, y_train = self.process_training_data(training_dir)
-        
-        print("\nTraining and evaluating models...")
+
+        print("\nTraining and evaluating classifier...")
         results = self.classifier.train_and_evaluate(X_train, y_train)
-        
-        # Print results
+
+        # ... (Print results and generate visualizations) ...
         print("\n=== Model Evaluation Results ===")
         for model_name, metrics in results.items():
             print(f"\n{model_name}:")
             for metric_name, value in metrics.items():
                 print(f"{metric_name}: {value:.4f}")
         print("==============================\n")
-        
-        # Generate and save visualizations
+
         print("\nGenerating visualizations...")
-        
-        # Plot model comparison
+        # ... (Plotting code) ...
         self.classifier.plot_model_comparison(results)
         print("Saved model comparison plot")
-        
-        # Plot cross-validation results
         self.classifier.plot_cross_validation_results(results)
         print("Saved cross-validation results plot")
-        
-        # Plot ROC curves
         self.classifier.plot_roc_curves(X_train, y_train)
         print("Saved ROC curves plot")
-        
-        # Plot confusion matrix for training data
-        y_pred = self.classifier.predict(X_train)[0]
-        self.classifier.plot_confusion_matrix(y_train, y_pred, np.unique(y_train))
-        print("Saved confusion matrix plot")
-        
-        # Plot feature importance
+        # Need to handle cases where predict returns multiple model predictions
+        if X_train.size > 0:
+            y_pred_train, _ = self.classifier.predict(X_train)
+            self.classifier.plot_confusion_matrix(y_train, y_pred_train, np.unique(y_train))
+            print("Saved confusion matrix plot")
         self.classifier.plot_feature_importance()
         print("Saved feature importance plot")
-        
-        # Process known test data
+
+        # --- Process Known Test Data and Save Annotated Images ---
         print("\nProcessing known test data...")
-        X_test_known, y_test_known = self.process_test_data(test_known_dir, is_known=True)
-        
-        # Make predictions for known test data
+        X_test_known, y_test_known, known_image_paths = self.process_test_data(test_known_dir, is_known=True)
+
+        print("\nMaking predictions for known test data...")
         y_pred_known, confidence_known = self.classifier.predict(X_test_known)
-        
-        # Plot confidence distribution for known test data
-        self.classifier.plot_confidence_distribution(confidence_known, y_pred_known)
-        print("Saved confidence distribution plot for known test data")
-        
-        # Print known test results
+
+        # Save annotated known test images
+        output_known_dir = 'output/Known'
+        create_directory(output_known_dir)
+        print(f"\nSaving annotated known test images to: {output_known_dir}")
+        for i, img_path in enumerate(tqdm(known_image_paths, desc="Annotating Known Images")):
+            base_filename = os.path.basename(img_path)
+            output_image_path = os.path.join(output_known_dir, base_filename)
+            draw_prediction_on_image(img_path, y_pred_known[i], confidence_known[i], output_image_path)
+
+        # ... (Plot confidence distribution and print known test results) ...
+        if confidence_known.size > 0:
+             self.classifier.plot_confidence_distribution(confidence_known, y_pred_known)
+             print("Saved confidence distribution plot for known test data")
         print("\n=== Known Test Results ===")
-        print(f"Accuracy: {np.mean(y_pred_known == y_test_known):.4f}")
-        print(f"Average Confidence: {np.mean(confidence_known):.4f}")
+        if y_test_known.size > 0 and y_pred_known.size > 0:
+             print(f"Accuracy: {np.mean(y_pred_known == y_test_known):.4f}")
+        if confidence_known.size > 0:
+            print(f"Average Confidence: {np.mean(confidence_known):.4f}")
         print("========================\n")
-        
-        # Process unknown test data
+
+        # --- Process Unknown Test Data and Save Annotated Images ---
         print("\nProcessing unknown test data...")
-        X_test_unknown = self.process_test_data(test_unknown_dir, is_known=False)
-        
-        # Make predictions for unknown test data
+        X_test_unknown, unknown_image_paths = self.process_test_data(test_unknown_dir, is_known=False)
+
+        print("\nMaking predictions for unknown test data...")
         y_pred_unknown, confidence_unknown = self.classifier.predict(X_test_unknown)
-        
-        # Plot confidence distribution for unknown test data
-        self.classifier.plot_confidence_distribution(confidence_unknown, y_pred_unknown, 
-                                                  filename='confidence_distribution_unknown.png')
-        print("Saved confidence distribution plot for unknown test data")
-        
-        # Print unknown test results
+
+        # Save annotated unknown test images
+        output_unknown_dir = 'output/Unknown'
+        create_directory(output_unknown_dir)
+        print(f"\nSaving annotated unknown test images to: {output_unknown_dir}")
+        for i, img_path in enumerate(tqdm(unknown_image_paths, desc="Annotating Unknown Images")):
+            base_filename = os.path.basename(img_path)
+            output_image_path = os.path.join(output_unknown_dir, base_filename)
+            # Use 'Unknown' as the prediction text for this folder
+            draw_prediction_on_image(img_path, "Unknown", confidence_unknown[i], output_image_path)
+
+        # ... (Plot confidence distribution and print unknown test results) ...
+        if confidence_unknown.size > 0:
+            self.classifier.plot_confidence_distribution(confidence_unknown, y_pred_unknown,
+                                                      filename='confidence_distribution_unknown.png')
+            print("Saved confidence distribution plot for unknown test data")
         print("\n=== Unknown Test Results ===")
-        print(f"Number of Unknown Predictions: {np.sum(y_pred_unknown == 'Unknown')}")
-        print(f"Average Confidence: {np.mean(confidence_unknown):.4f}")
+        # Count how many were predicted as 'Unknown' if your model supports it
+        # If predict only gives croc IDs, this part needs adjustment
+        # print(f"Number of Unknown Predictions: {np.sum(y_pred_unknown == 'Unknown')}") 
+        if confidence_unknown.size > 0:
+            print(f"Average Confidence: {np.mean(confidence_unknown):.4f}")
         print("==========================\n")
-        
-        print("\nAll visualizations have been saved to the 'plots' directory.")
+
+        print("\nAnnotated test images saved to the 'output' directory.")
         print("\n=== Pipeline Completed Successfully ===")
 
 if __name__ == "__main__":

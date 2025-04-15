@@ -7,3 +7,8 @@ cropped.zip
 feature_cache/
 feature_cache.zip
 crocodile_pipeline.py
+detector_models/
+model_cache/
+crocodile_detection_dataset/
+yolov8n.pt
+*.txt
