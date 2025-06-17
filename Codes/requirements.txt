@@ -166,7 +166,7 @@ tensorflow==2.18.0
 tensorflow_intel==2.18.0
 termcolor==2.5.0
 threadpoolctl==3.5.0
-torch==2.6.0
+torch==2.7.1
 torchvision==0.21.0
 tqdm==4.67.1
 typing_extensions==4.12.2
@@ -240,7 +240,7 @@ tensorflow_intel==2.18.0
 termcolor==2.5.0
 threadpoolctl==3.5.0
 tifffile==2025.3.30
-torch==2.6.0
+torch==2.7.1
 torchvision==0.21.0
 tqdm==4.67.1
 typing_extensions==4.12.2
@@ -314,7 +314,7 @@ tensorflow_intel==2.18.0
 termcolor==2.5.0
 threadpoolctl==3.5.0
 tifffile==2025.3.30
-torch==2.6.0
+torch==2.7.1
 torchvision==0.21.0
 tqdm==4.67.1
 typing_extensions==4.12.2
