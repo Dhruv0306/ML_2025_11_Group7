@@ -33,7 +33,7 @@ Pygments==2.19.1
 pyparsing==3.2.1
 python-dateutil==2.9.0.post0
 pytz==2025.1
-requests==2.32.3
+requests==2.32.4
 rich==13.9.4
 scikit-learn==1.6.1
 scipy==1.15.2
@@ -88,7 +88,7 @@ Pygments==2.19.1
 pyparsing==3.2.1
 python-dateutil==2.9.0.post0
 pytz==2025.1
-requests==2.32.3
+requests==2.32.4
 rich==13.9.4
 scikit-learn==1.6.1
 scipy==1.15.2
@@ -152,7 +152,7 @@ pyparsing==3.2.1
 python-dateutil==2.9.0.post0
 pytz==2025.1
 PyYAML==6.0.2
-requests==2.32.3
+requests==2.32.4
 rich==13.9.4
 scikit-learn==1.6.1
 scipy==1.15.2
@@ -224,7 +224,7 @@ pyparsing==3.2.1
 python-dateutil==2.9.0.post0
 pytz==2025.1
 PyYAML==6.0.2
-requests==2.32.3
+requests==2.32.4
 rich==13.9.4
 scikit-image==0.25.2
 scikit-learn==1.6.1
@@ -298,7 +298,7 @@ pyparsing==3.2.1
 python-dateutil==2.9.0.post0
 pytz==2025.1
 PyYAML==6.0.2
-requests==2.32.3
+requests==2.32.4
 rich==13.9.4
 scikit-image==0.25.2
 scikit-learn==1.6.1
