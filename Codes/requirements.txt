@@ -28,7 +28,7 @@ optree==0.14.0
 packaging==24.2
 pandas==2.2.3
 pillow==11.1.0
-protobuf==5.29.3
+protobuf==5.29.5
 Pygments==2.19.1
 pyparsing==3.2.1
 python-dateutil==2.9.0.post0
@@ -83,7 +83,7 @@ optree==0.14.0
 packaging==24.2
 pandas==2.2.3
 pillow==11.1.0
-protobuf==5.29.3
+protobuf==5.29.5
 Pygments==2.19.1
 pyparsing==3.2.1
 python-dateutil==2.9.0.post0
@@ -144,7 +144,7 @@ optree==0.14.0
 packaging==24.2
 pandas==2.2.3
 pillow==11.1.0
-protobuf==5.29.3
+protobuf==5.29.5
 psutil==7.0.0
 py-cpuinfo==9.0.0
 Pygments==2.19.1
@@ -216,7 +216,7 @@ optree==0.14.0
 packaging==24.2
 pandas==2.2.3
 pillow==11.1.0
-protobuf==5.29.3
+protobuf==5.29.5
 psutil==7.0.0
 py-cpuinfo==9.0.0
 Pygments==2.19.1
@@ -290,7 +290,7 @@ optree==0.14.0
 packaging==24.2
 pandas==2.2.3
 pillow==11.1.0
-protobuf==5.29.3
+protobuf==5.29.5
 psutil==7.0.0
 py-cpuinfo==9.0.0
 Pygments==2.19.1
